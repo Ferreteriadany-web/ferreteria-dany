@@ -212,6 +212,28 @@ tbody td{padding:10px 12px;vertical-align:middle}
 .scan-hint{color:#666;font-size:11px;margin-top:8px;text-align:center;font-family:'Raleway',sans-serif}
 
 /* ── RESPONSIVE ── */
+/* ── AVISO DUPLICADO ── */
+.dup-back{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10000;align-items:center;justify-content:center;padding:20px}
+.dup-back.open{display:flex;animation:ddIn .15s ease-out}
+.dup-box{background:#fff;border-radius:18px;max-width:380px;width:100%;padding:26px 24px;box-shadow:0 24px 80px rgba(0,0,0,.4);text-align:center}
+.dup-ic{font-size:38px;margin-bottom:8px}
+.dup-tit{font-family:'League Spartan',sans-serif;font-size:17px;font-weight:700;color:#2E2E2E;margin-bottom:14px}
+.dup-cod{font-family:'League Spartan',sans-serif;font-weight:700;color:#EB1D24;font-size:15px}
+.dup-desc{color:#666;font-size:13px;margin-top:4px;line-height:1.4;margin-bottom:18px}
+.dup-lbl{font-family:'League Spartan',sans-serif;font-size:11px;font-weight:700;color:#999;letter-spacing:.5px;margin-bottom:8px}
+.dup-qrow{display:flex;align-items:center;justify-content:center;gap:12px;margin-bottom:6px}
+.dup-qb{width:44px;height:44px;border:1.5px solid #e0e0e0;background:#f8f8f8;border-radius:12px;cursor:pointer;font-size:22px;font-weight:700;display:flex;align-items:center;justify-content:center;-webkit-appearance:none;transition:.15s}
+.dup-qb:active{background:#EB1D24;color:#fff;border-color:#EB1D24}
+.dup-qin{width:80px;height:44px;text-align:center;border:2px solid #e8e8e8;border-radius:12px;font-size:20px;font-family:'Raleway',sans-serif;font-weight:600;outline:none;-webkit-appearance:none}
+.dup-qin:focus{border-color:#EB1D24}
+.dup-hint{font-size:12px;color:#aaa;margin-bottom:18px;min-height:16px}
+.dup-btns{display:flex;gap:10px}
+.dup-b{flex:1;padding:13px;border:none;border-radius:12px;font-family:'League Spartan',sans-serif;font-size:14px;font-weight:700;cursor:pointer;-webkit-appearance:none;transition:.15s}
+.dup-cancel{background:#eee;color:#666}
+.dup-cancel:active{background:#ddd}
+.dup-save{background:#EB1D24;color:#fff}
+.dup-save:active{background:#c81820}
+
 @media(max-width:640px){
   header{flex-direction:column;align-items:flex-start;gap:10px}
   .hright{width:100%;justify-content:space-between}
@@ -347,6 +369,27 @@ tbody td{padding:10px 12px;vertical-align:middle}
       </div>
       <div class="prog-wrap" id="progWrap"><div class="prog-bar" id="progBar"></div></div>
       <div id="toast" class="toast"></div>
+
+      <!-- AVISO PRODUCTO YA AGREGADO -->
+      <div id="dupModal" class="dup-back">
+        <div class="dup-box">
+          <div class="dup-ic">&#9888;&#65039;</div>
+          <div class="dup-tit">Este producto ya está en la orden</div>
+          <div class="dup-cod" id="dupCod"></div>
+          <div class="dup-desc" id="dupDesc"></div>
+          <div class="dup-lbl">Cantidad ya pedida</div>
+          <div class="dup-qrow">
+            <button class="dup-qb" onclick="dupStep(-1)">&minus;</button>
+            <input type="number" id="dupQty" class="dup-qin" min="1" value="1"/>
+            <button class="dup-qb" onclick="dupStep(1)">+</button>
+          </div>
+          <div class="dup-hint" id="dupHint"></div>
+          <div class="dup-btns">
+            <button class="dup-b dup-cancel" onclick="dupClose()">Cancelar</button>
+            <button class="dup-b dup-save" onclick="dupSave()">Guardar cantidad</button>
+          </div>
+        </div>
+      </div>
       <div class="sync-ok" id="syncOk">&#10003; Guardado</div>
     </div></div>
 
@@ -1330,11 +1373,69 @@ function agregar(){
   var found=null;
   for(var i=0;i<items.length;i++) if(items[i].c===f[0]&&items[i].v===f[2]){found=items[i];break;}
   var ahora=new Date().toISOString();
-  if(found){found.q++;found.ua=ahora;}else{items.push({c:f[0],p:f[1],v:f[2],q:1,fa:ahora,ua:ahora});}
+  if(found){
+    // Ya está en la orden: avisar y dejar editar la cantidad
+    cerrarDd();
+    abrirDup(found);
+    inp.value=''; 
+    return;
+  }
+  items.push({c:f[0],p:f[1],v:f[2],q:1,fa:ahora,ua:ahora});
   guardar();
   toast(f[0]+' agregado ('+f[2]+')','tok');
   inp.value=''; inp.focus(); cerrarDd(); render();
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// AVISO DE PRODUCTO YA AGREGADO
+// ═══════════════════════════════════════════════════════════════════════════════
+var _dupItem=null;      // item de la orden que se está editando
+var _dupPrev=0;         // cantidad que tenía antes de abrir el modal
+
+function abrirDup(it){
+  _dupItem=it;
+  _dupPrev=it.q;
+  document.getElementById('dupCod').textContent=it.c+' ('+it.v+')';
+  document.getElementById('dupDesc').textContent=it.p||'';
+  document.getElementById('dupQty').value=it.q;
+  actualizarHintDup();
+  document.getElementById('dupModal').classList.add('open');
+  setTimeout(function(){var q=document.getElementById('dupQty');q.focus();q.select();},50);
+}
+function dupStep(n){
+  var q=document.getElementById('dupQty');
+  var v=(parseInt(q.value)||1)+n;
+  if(v<1)v=1;
+  q.value=v;
+  actualizarHintDup();
+}
+function actualizarHintDup(){
+  var v=parseInt(document.getElementById('dupQty').value)||1;
+  var h=document.getElementById('dupHint');
+  if(v>_dupPrev) h.textContent='Vas a sumar '+(v-_dupPrev)+' (antes '+_dupPrev+')';
+  else if(v<_dupPrev) h.textContent='Vas a quitar '+(_dupPrev-v)+' (antes '+_dupPrev+')';
+  else h.textContent='Sin cambios (tenías '+_dupPrev+')';
+}
+function dupSave(){
+  if(!_dupItem){dupClose();return;}
+  var v=parseInt(document.getElementById('dupQty').value)||1;
+  if(v<1)v=1;
+  _dupItem.q=v;
+  _dupItem.ua=new Date().toISOString();
+  guardar();
+  toast('Cantidad actualizada: '+_dupItem.c+' = '+v,'tok');
+  dupClose();
+  var inp=document.getElementById('scanInput'); if(inp) inp.focus();
+  render();
+}
+function dupClose(){
+  document.getElementById('dupModal').classList.remove('open');
+  _dupItem=null;
+}
+window.dupStep=dupStep;
+window.dupSave=dupSave;
+window.dupClose=dupClose;
+document.addEventListener('input',function(e){ if(e.target&&e.target.id==='dupQty') actualizarHintDup(); });
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // RENDER
@@ -2011,7 +2112,13 @@ function scanOk(codigo){
   var found=null;
   for(var i=0;i<items.length;i++) if(items[i].c===f[0]&&items[i].v===f[2]){found=items[i];break;}
   var ahora=new Date().toISOString();
-  if(found){found.q++;found.ua=ahora;}else{items.push({c:f[0],p:f[1],v:f[2],q:1,fa:ahora,ua:ahora});}
+  if(found){
+    // Ya estaba: cerrar la cámara y avisar para editar la cantidad
+    cerrarScanner();
+    abrirDup(found);
+    return;
+  }
+  items.push({c:f[0],p:f[1],v:f[2],q:1,fa:ahora,ua:ahora});
   guardar(); render();
   if(_qr){
     _qr.pause();
