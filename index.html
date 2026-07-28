@@ -916,12 +916,11 @@ function procesarImportExcel(){
 }
 
 function borrarYImportar(rows){
-  impLog('Eliminando base anterior...','#ffd966');
-  document.getElementById('impProgressLabel').textContent='Limpiando base anterior...';
-  borrarColeccionImp(function(){
-    impLog('✓ Base anterior eliminada','#7fff7f');
-    importarRows(rows);
-  });
+  // YA NO se borra todo antes (ese paso se colgaba con +100mil productos).
+  // Importar pisa cada producto con batch.set(), así se actualiza sin destruir la base.
+  impLog('Actualizando productos (sin borrar la base)...','#ffd966');
+  document.getElementById('impProgressLabel').textContent='Actualizando productos...';
+  importarRows(rows);
 }
 
 function borrarColeccionImp(cb){
