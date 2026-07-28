@@ -560,7 +560,90 @@ function finalizarCarga() {
 var PROD=[], IDX_C=new Map(), IDX_B=new Map(), prodReady=false;
 var DUX={}; // codigo -> {precioCosto, precioVenta, stock}
 
-function cargarProd(){
+// ═══════════════════════════════════════════════════════════════════════════════
+// CATÁLOGO EN BLOQUES (Firestore) — así la búsqueda usa SIEMPRE lo importado de Dux
+// Se guarda en la colección 'catalogo', partido en documentos de ~7000 productos.
+// Cada documento pesa < 1 MB (límite de Firestore). Leerlos son ~20 lecturas, no 118 mil.
+// ═══════════════════════════════════════════════════════════════════════════════
+var CAT_POR_BLOQUE=7000;
+
+function guardarCatalogoEnBloques(catalogo, cb){
+  // Partir en bloques y guardar cada uno como un doc JSON. Primero limpiar bloques viejos.
+  var totalBloques=Math.ceil(catalogo.length/CAT_POR_BLOQUE);
+  // Borrar bloques anteriores que sobren (si antes había más)
+  FS.collection('catalogo').get().then(function(snap){
+    var batch=FS.batch();
+    snap.docs.forEach(function(d){ batch.delete(d.ref); });
+    batch.commit().then(function(){ escribirBloques(); }).catch(function(){ escribirBloques(); });
+  }).catch(function(){ escribirBloques(); });
+
+  function escribirBloques(){
+    var idx=0;
+    function siguiente(){
+      if(idx>=totalBloques){
+        // Guardar meta con la cantidad de bloques
+        FS.collection('catalogo').doc('_meta').set({
+          bloques: totalBloques,
+          total: catalogo.length,
+          updatedAt: new Date().toISOString()
+        }).then(function(){ cb(totalBloques); }).catch(function(){ cb(totalBloques); });
+        return;
+      }
+      var parte=catalogo.slice(idx*CAT_POR_BLOQUE, (idx+1)*CAT_POR_BLOQUE);
+      FS.collection('catalogo').doc('bloque_'+idx).set({
+        datos: JSON.stringify(parte)
+      }).then(function(){
+        idx++;
+        setTimeout(siguiente, 100);
+      }).catch(function(err){
+        impLog('✗ Error guardando bloque '+idx+': '+err.message,'#ff6464');
+        idx++; setTimeout(siguiente, 100);
+      });
+    }
+    siguiente();
+  }
+}
+
+// Intenta cargar el catálogo desde Firestore. Llama okCb(true) si lo logró, okCb(false) si no hay.
+function cargarCatalogoDesdeFirebase(okCb){
+  FS.collection('catalogo').doc('_meta').get().then(function(metaSnap){
+    if(!metaSnap.exists){ okCb(false); return; }
+    var meta=metaSnap.data();
+    var nBloques=meta.bloques||0;
+    if(nBloques<=0){ okCb(false); return; }
+    var badge=document.getElementById('dbBadge');
+    if(badge){ badge.className='loading'; badge.style.display='inline-block'; }
+    document.getElementById('progWrap').classList.add('show');
+    var idx=0;
+    function traerBloque(){
+      if(idx>=nBloques){ finProd(); okCb(true); return; }
+      FS.collection('catalogo').doc('bloque_'+idx).get().then(function(snap){
+        if(snap.exists){
+          var parte=[];
+          try{ parte=JSON.parse(snap.data().datos||'[]'); }catch(e){ parte=[]; }
+          for(var j=0;j<parte.length;j++){
+            var r=parte[j]; PROD.push(r);
+            IDX_C.set(r[0].toLowerCase(), PROD.length-1);
+            if(r[3]&&r[3]!==''&&r[3]!=='#N/A ()') IDX_B.set(r[3].trim(), PROD.length-1);
+          }
+        }
+        idx++;
+        var p=Math.round(idx/nBloques*100);
+        document.getElementById('progBar').style.width=p+'%';
+        if(badge) badge.textContent=p+'%...';
+        setTimeout(traerBloque, 5);
+      }).catch(function(err){
+        // Si falla a mitad, usar lo que haya y seguir (o caer al respaldo si no cargó nada)
+        if(PROD.length>0){ finProd(); okCb(true); }
+        else { okCb(false); }
+      });
+    }
+    traerBloque();
+  }).catch(function(){ okCb(false); });
+}
+
+// Carga desde la lista incrustada en el HTML (RESPALDO, hasta la primera importación nueva)
+function cargarProdDesdeDB(){
   var chunks=[DB0,DB1,DB2,DB3,DB4,DB5,DB6,DB7,DB8,DB9,DB10,DB11];
   var badge=document.getElementById('dbBadge');
   badge.className='loading'; badge.style.display='inline-block';
@@ -593,6 +676,17 @@ function finProd(){
     '<tr><td colspan="8" class="empty">Busca o escanea un producto para comenzar</td></tr>';
   poblarProveedores();
   cargarDUX();
+}
+
+// PUNTO DE ENTRADA: primero intenta el catálogo de Firebase (lo de Dux).
+// Si todavía no existe (nunca importaste con la versión nueva), usa la lista incrustada.
+function cargarProd(){
+  cargarCatalogoDesdeFirebase(function(ok){
+    if(!ok){
+      // No hay catálogo en Firebase todavía → usar respaldo incrustado
+      cargarProdDesdeDB();
+    }
+  });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -848,6 +942,7 @@ function importarRows(rows){
   impLog('Importando '+rows.length.toLocaleString('es-AR')+' productos...');
   document.getElementById('impProgressLabel').textContent='Importando productos...';
   var BATCH=400, i=0, procesados=0, omitidos=0, total=rows.length;
+  var catalogo=[];   // catálogo compacto para la búsqueda: [codigo, descripcion, proveedor, codBarra]
 
   // Helper: leer un campo del row probando varios nombres (insensible a may/min)
   function getField(row, names){
@@ -897,6 +992,13 @@ function importarRows(rows){
         stock: 0,
         updatedAt: new Date().toISOString()
       });
+      // Agregar al catálogo compacto para la búsqueda (código, descripción, proveedor, cod. barra)
+      catalogo.push([
+        codigo,
+        String(getField(row,['PRODUCTO','Producto','Descripcion'])||'').trim(),
+        String(getField(row,['PROVEEDOR','Proveedor'])||'').trim(),
+        String(getField(row,['COD BARRA','Cod Barra','Codigo Barra'])||'').trim()
+      ]);
       procesados++;
     }
     batch.commit().then(function(){
@@ -914,6 +1016,16 @@ function importarRows(rows){
   }
 
   function finalizar(){
+    // Guardar el catálogo compacto en bloques (para que la búsqueda use SIEMPRE lo de Dux)
+    impLog('Guardando catálogo de búsqueda...','#ffd966');
+    document.getElementById('impProgressLabel').textContent='Guardando catálogo de búsqueda...';
+    guardarCatalogoEnBloques(catalogo, function(nBloques){
+      impLog('✓ Catálogo guardado en '+nBloques+' bloque(s)','#7fff7f');
+      finalizarConfig();
+    });
+  }
+
+  function finalizarConfig(){
     // Actualizar config dux_sync
     FS.collection('config').doc('dux_sync').set({
       ultimaSync: new Date().toISOString(),
@@ -1318,7 +1430,6 @@ function agregarSeleccionados(){
   if(!dd._m){ return; }
   var chks=dd.querySelectorAll('.ddi-chk');
   var agregados=0;
-  var duplicados=[];   // {it, sum} productos que YA estaban en la orden
   var ahora=new Date().toISOString();
   for(var i=0;i<chks.length;i++){
     if(!chks[i].checked) continue;
@@ -1328,26 +1439,15 @@ function agregarSeleccionados(){
     var qty=parseInt(document.getElementById('ddi-qty'+idx).value)||1;
     var found=null;
     for(var j=0;j<items.length;j++) if(items[j].c===f[0]&&items[j].v===f[2]){found=items[j];break;}
-    if(found){ found.q+=qty; found.ua=ahora; duplicados.push({it:found,sum:qty}); }
+    if(found){ found.q+=qty; found.ua=ahora; }
     else { items.push({c:f[0],p:f[1],v:f[2],q:qty,fa:ahora,ua:ahora}); }
     agregados++;
   }
   if(agregados===0){ toast('Tildá al menos un producto','terr'); return; }
   guardar();
+  toast(agregados+' producto(s) agregado(s)','tok');
   var inp=document.getElementById('scanInput');
-  inp.value=''; cerrarDd(); render();
-  // Si alguno ya estaba en la orden, avisar y dejar editar la cantidad
-  if(duplicados.length>0){
-    if(duplicados.length===1){
-      abrirDup(duplicados[0].it, duplicados[0].sum);
-    } else {
-      toast(duplicados.length+' productos ya estaban y se sumaron','terr');
-      inp.focus();
-    }
-  } else {
-    toast(agregados+' producto(s) agregado(s)','tok');
-    inp.focus();
-  }
+  inp.value=''; inp.focus(); cerrarDd(); render();
 }
 window.toggleSel=toggleSel;
 window.changeQtyDd=changeQtyDd;
@@ -1404,11 +1504,9 @@ function agregar(){
 var _dupItem=null;      // item de la orden que se está editando
 var _dupPrev=0;         // cantidad que tenía antes de abrir el modal
 
-function abrirDup(it, sumado){
+function abrirDup(it){
   _dupItem=it;
-  // Si venimos de sumar (dropdown), _dupPrev es lo que había ANTES de sumar
-  _dupPrev = sumado ? (it.q - sumado) : it.q;
-  if(_dupPrev<0) _dupPrev=0;
+  _dupPrev=it.q;
   document.getElementById('dupCod').textContent=it.c+' ('+it.v+')';
   document.getElementById('dupDesc').textContent=it.p||'';
   document.getElementById('dupQty').value=it.q;
