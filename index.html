@@ -1440,11 +1440,23 @@ function changeQtyDd(idx, delta){
   if(chk) chk.checked=true;
 }
 
+// Busca un producto en la orden SOLO por código (único), tolerante a mayúsculas y espacios.
+// Antes se comparaba código+proveedor y una mínima diferencia de texto duplicaba la fila.
+function buscarEnOrden(codigo){
+  if(!codigo) return null;
+  var k=String(codigo).trim().toLowerCase();
+  for(var j=0;j<items.length;j++){
+    if(String(items[j].c).trim().toLowerCase()===k) return items[j];
+  }
+  return null;
+}
+
 function agregarSeleccionados(){
   var dd=document.getElementById('dd');
   if(!dd._m){ return; }
   var chks=dd.querySelectorAll('.ddi-chk');
   var agregados=0;
+  var duplicados=[];   // {it, sum} de los que YA estaban en la orden
   var ahora=new Date().toISOString();
   for(var i=0;i<chks.length;i++){
     if(!chks[i].checked) continue;
@@ -1452,17 +1464,22 @@ function agregarSeleccionados(){
     var m=dd._m[idx]; if(!m) continue;
     var f=m.r;
     var qty=parseInt(document.getElementById('ddi-qty'+idx).value)||1;
-    var found=null;
-    for(var j=0;j<items.length;j++) if(items[j].c===f[0]&&items[j].v===f[2]){found=items[j];break;}
-    if(found){ found.q+=qty; found.ua=ahora; }
+    var found=buscarEnOrden(f[0]);
+    if(found){ found.q+=qty; found.ua=ahora; duplicados.push({it:found,sum:qty}); }
     else { items.push({c:f[0],p:f[1],v:f[2],q:qty,fa:ahora,ua:ahora}); }
     agregados++;
   }
   if(agregados===0){ toast('Tildá al menos un producto','terr'); return; }
   guardar();
-  toast(agregados+' producto(s) agregado(s)','tok');
   var inp=document.getElementById('scanInput');
-  inp.value=''; inp.focus(); cerrarDd(); render();
+  inp.value=''; cerrarDd(); render();
+  if(duplicados.length===1){
+    abrirDup(duplicados[0].it, duplicados[0].sum);
+  } else if(duplicados.length>1){
+    toast(duplicados.length+' ya estaban y se sumaron','terr'); inp.focus();
+  } else {
+    toast(agregados+' producto(s) agregado(s)','tok'); inp.focus();
+  }
 }
 window.toggleSel=toggleSel;
 window.changeQtyDd=changeQtyDd;
@@ -1497,8 +1514,7 @@ function agregar(){
   if(!val){toast('Ingresa un codigo o descripcion','terr');return;}
   var f=buscar(val);
   if(!f){toast('No encontrado: '+val,'terr');inp.select();return;}
-  var found=null;
-  for(var i=0;i<items.length;i++) if(items[i].c===f[0]&&items[i].v===f[2]){found=items[i];break;}
+  var found=buscarEnOrden(f[0]);
   var ahora=new Date().toISOString();
   if(found){
     // Ya está en la orden: avisar y dejar editar la cantidad
@@ -1519,9 +1535,10 @@ function agregar(){
 var _dupItem=null;      // item de la orden que se está editando
 var _dupPrev=0;         // cantidad que tenía antes de abrir el modal
 
-function abrirDup(it){
+function abrirDup(it, sumado){
   _dupItem=it;
-  _dupPrev=it.q;
+  _dupPrev = sumado ? (it.q - sumado) : it.q;
+  if(_dupPrev<0) _dupPrev=0;
   document.getElementById('dupCod').textContent=it.c+' ('+it.v+')';
   document.getElementById('dupDesc').textContent=it.p||'';
   document.getElementById('dupQty').value=it.q;
@@ -2236,8 +2253,7 @@ function scanOk(codigo){
   var f=buscar(codigo);
   if(!f){r.textContent='No encontrado: '+codigo;r.className='scan-result notfound';return;}
   r.textContent='OK: '+f[0]+' - '+f[1].substring(0,35);r.className='scan-result found';
-  var found=null;
-  for(var i=0;i<items.length;i++) if(items[i].c===f[0]&&items[i].v===f[2]){found=items[i];break;}
+  var found=buscarEnOrden(f[0]);
   var ahora=new Date().toISOString();
   if(found){
     // Ya estaba: cerrar la cámara y avisar para editar la cantidad
