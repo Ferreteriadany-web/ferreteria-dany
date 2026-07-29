@@ -1534,9 +1534,11 @@ function agregar(){
 // ═══════════════════════════════════════════════════════════════════════════════
 var _dupItem=null;      // item de la orden que se está editando
 var _dupPrev=0;         // cantidad que tenía antes de abrir el modal
+var _dupSumado=0;       // cuánto se sumó ANTES de abrir (dropdown); Cancelar lo revierte
 
 function abrirDup(it, sumado){
   _dupItem=it;
+  _dupSumado = sumado || 0;
   _dupPrev = sumado ? (it.q - sumado) : it.q;
   if(_dupPrev<0) _dupPrev=0;
   document.getElementById('dupCod').textContent=it.c+' ('+it.v+')';
@@ -1566,6 +1568,7 @@ function dupSave(){
   if(v<1)v=1;
   _dupItem.q=v;
   _dupItem.ua=new Date().toISOString();
+  _dupSumado=0;   // confirmado: ya no hay nada que revertir
   guardar();
   toast('Cantidad actualizada: '+_dupItem.c+' = '+v,'tok');
   dupClose();
@@ -1573,6 +1576,22 @@ function dupSave(){
   render();
 }
 function dupClose(){
+  // Cancelar: si el modal vino del dropdown (que ya había sumado), revertir ese aumento.
+  if(_dupItem && _dupSumado>0){
+    _dupItem.q -= _dupSumado;
+    if(_dupItem.q<=0){
+      // Si al revertir queda en 0, quitar el ítem de la orden
+      var k=String(_dupItem.c).trim().toLowerCase();
+      for(var i=0;i<items.length;i++){
+        if(String(items[i].c).trim().toLowerCase()===k){ items.splice(i,1); break; }
+      }
+    } else {
+      _dupItem.ua=new Date().toISOString();
+    }
+    guardar();
+    render();
+  }
+  _dupSumado=0;
   document.getElementById('dupModal').classList.remove('open');
   _dupItem=null;
 }
