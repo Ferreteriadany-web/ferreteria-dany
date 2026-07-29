@@ -568,20 +568,25 @@ var DUX={}; // codigo -> {precioCosto, precioVenta, stock}
 var CAT_POR_BLOQUE=7000;
 
 function guardarCatalogoEnBloques(catalogo, cb){
-  // Partir en bloques y guardar cada uno como un doc JSON. Primero limpiar bloques viejos.
   var totalBloques=Math.ceil(catalogo.length/CAT_POR_BLOQUE);
-  // Borrar bloques anteriores que sobren (si antes había más)
-  FS.collection('catalogo').get().then(function(snap){
-    var batch=FS.batch();
-    snap.docs.forEach(function(d){ batch.delete(d.ref); });
-    batch.commit().then(function(){ escribirBloques(); }).catch(function(){ escribirBloques(); });
-  }).catch(function(){ escribirBloques(); });
+  // PASO 1: borrar el _meta viejo PRIMERO. Mientras no exista _meta, la app usa el respaldo.
+  // Así, si el guardado se corta a mitad, nunca queda un _meta "mintiendo" que hay catálogo.
+  FS.collection('catalogo').doc('_meta').delete().then(limpiarViejos).catch(limpiarViejos);
+
+  function limpiarViejos(){
+    // Borrar bloques anteriores que sobren
+    FS.collection('catalogo').get().then(function(snap){
+      var batch=FS.batch();
+      snap.docs.forEach(function(d){ if(d.id!=='_meta') batch.delete(d.ref); });
+      batch.commit().then(function(){ escribirBloques(); }).catch(function(){ escribirBloques(); });
+    }).catch(function(){ escribirBloques(); });
+  }
 
   function escribirBloques(){
     var idx=0;
     function siguiente(){
       if(idx>=totalBloques){
-        // Guardar meta con la cantidad de bloques
+        // PASO FINAL: recién ahora, con TODOS los bloques escritos, guardar _meta.
         FS.collection('catalogo').doc('_meta').set({
           bloques: totalBloques,
           total: catalogo.length,
@@ -594,6 +599,8 @@ function guardarCatalogoEnBloques(catalogo, cb){
         datos: JSON.stringify(parte)
       }).then(function(){
         idx++;
+        var pct=Math.round(idx/totalBloques*100);
+        document.getElementById('impProgressLabel').textContent='Guardando catálogo... '+pct+'%';
         setTimeout(siguiente, 100);
       }).catch(function(err){
         impLog('✗ Error guardando bloque '+idx+': '+err.message,'#ff6464');
@@ -616,7 +623,16 @@ function cargarCatalogoDesdeFirebase(okCb){
     document.getElementById('progWrap').classList.add('show');
     var idx=0;
     function traerBloque(){
-      if(idx>=nBloques){ finProd(); okCb(true); return; }
+      if(idx>=nBloques){
+        // Terminó: validar que realmente cargó un catálogo razonable.
+        // Si quedó vacío o casi vacío (importación cortada), usar el respaldo.
+        if(PROD.length < 100){
+          PROD.length=0; IDX_C.clear(); IDX_B.clear();
+          okCb(false);
+          return;
+        }
+        finProd(); okCb(true); return;
+      }
       FS.collection('catalogo').doc('bloque_'+idx).get().then(function(snap){
         if(snap.exists){
           var parte=[];
