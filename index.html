@@ -660,6 +660,91 @@ function cargarCatalogoDesdeFirebase(okCb){
 }
 
 // Carga desde la lista incrustada en el HTML (RESPALDO, hasta la primera importación nueva)
+// ═══════════════════════════════════════════════════════════════════════════════
+// MAPA DE APODOS: código → apodo del proveedor, tomado del catálogo original (DB).
+// Es la fuente de verdad de los apodos ("BREMEN", "LUSQTOFF"...), aunque Dux traiga
+// la razón social. Se construye SIEMPRE, aunque la búsqueda use el catálogo de Firebase.
+// ═══════════════════════════════════════════════════════════════════════════════
+// Mapa OFICIAL de Dux: razón social (MAYÚSCULAS) → apodo (Nombre de Fantasía).
+// Extraído del "Listado de Proveedores" exportado de Dux.
+var MAPA_PROV={
+  "ALIAFOR SA":"ALIAFOR",
+  "ASOCIADOS DEL OESTE S.R.L.":"HUGO",
+  "BAMBIN SA":"BAMBIN",
+  "BREMEN TOOLS ARGENTINA SA":"BREMEN TOOLS",
+  "COATING COLORS S.A.":"POLACRIN",
+  "DIEGO ADRIAN PEREYRA":"DEL NANO",
+  "DISAL S A":"TERSUAVE",
+  "DISAPLA SA":"DISAPLA",
+  "DISTRIBUIDORA ARGUS SA":"BELCER",
+  "DISTRIBUIDORA FASANI S.R.L.":"FASANI",
+  "DISTRIBUIDORA VALIMART SRL":"PARSECS",
+  "DISTRIBUIDORA VILLANUEVA S.A.":"VILLANUEVA",
+  "DISTRIFERSAN SRL":"MANZORRO",
+  "ERPA SOCIEDAD ANONIMA COMERCIAL INDUSTRIAL FINANCIERA":"ERPA",
+  "FABIAN GUSTAVO DIAZ":"BULONAR",
+  "FERNANDO ANDRES QUINTELA":"POXIPOL",
+  "FERRETERIA DANY":"ART. VARIOS",
+  "FISCHER ARGENTINA SA":"FISCHER",
+  "FLEB PRODUCTOS INDUSTRIALES SA":"FLEB",
+  "LILIA BEATRIZ GALLETTO":"ACUAPACK",
+  "LUSQTOFF ARGENTINA S.A.":"LUSQTOFF",
+  "MARCELO ALEJANDRO BILLONE":"SILOC",
+  "MARCELO RICARDO MONTSERRAT":"DEL NORTE",
+  "MORO, LEON":"CASA LEON",
+  "ORANGE BLUE IMPORT & EXPORT TOOLS S.R.L.":"COMODO",
+  "PFARHER ROSA ESTHER":"DISTRISER",
+  "RESORTECNICA SRL":"RESORTECNICA",
+  "ROCA GRIFERIA SA":"GRIFERIA ROCA",
+  "RUEDAS HOFER S R L":"RUEDAS HOFER",
+  "SCHIAROLI CLAUDIO JOSE Y SCHIAROLI ANA MARIA":"SH",
+  "SERVICIOS BIOAGUAS S. R. L.":"CLOROTEC",
+  "SILVIO OSCAR DATTOLI":"MOLDURAS PARTHENON",
+  "SOLEDAD ANDREA VILLALBA":"DANIEL",
+  "TOP TOOLS S.A.":"RUHLMANN",
+  "TOPASOL SA":"TOPASOL",
+  "VELLA HNOS DE ANTONIO VELLA Y ROLANDO VELLA SOCIEDAD DE HECHO":"BELTRAN",
+  "WORSAN SRL":"DISTRIBUIDORA BS. AS.",
+  "ZC HERRAMENTAL S.A.":"ZC HERRAMENTAL"
+};
+function apodoPorRazon(v){
+  if(!v) return null;
+  var k=String(v).replace(/\s+/g," ").trim().toUpperCase();
+  if(MAPA_PROV[k]) return MAPA_PROV[k];
+  // Tolerante: si el texto empieza con una razón social conocida (o viceversa),
+  // por ejemplo "VELLA HNOS ... SOCIEDAD DE HECHO" vs la del listado sin ese final.
+  for(var razon in MAPA_PROV){
+    if(k.indexOf(razon)===0 || razon.indexOf(k)===0) return MAPA_PROV[razon];
+  }
+  return null;
+}
+var APODO=new Map();
+var _apodosListos=false;
+function construirApodos(){
+  if(_apodosListos) return;
+  try{
+    var chunks=[DB0,DB1,DB2,DB3,DB4,DB5,DB6,DB7,DB8,DB9,DB10,DB11];
+    for(var i=0;i<chunks.length;i++){
+      var c=chunks[i];
+      for(var j=0;j<c.length;j++){
+        var r=c[j];
+        if(r && r[0] && r[2]) APODO.set(String(r[0]).trim().toLowerCase(), String(r[2]).trim());
+      }
+    }
+    _apodosListos=true;
+  }catch(e){ /* si por algo no está DB, seguimos sin apodos */ }
+}
+// Devuelve el apodo del proveedor. Primero por código (catálogo original),
+// si no está, por razón social usando el mapa oficial de Dux. Último recurso: el de respaldo.
+function apodoDe(codigo, fallback){
+  if(!_apodosListos) construirApodos();
+  var a=APODO.get(String(codigo||'').trim().toLowerCase());
+  if(a && a!=='') return a;
+  var b=apodoPorRazon(fallback);   // fallback suele ser la razón social que trae Dux
+  if(b) return b;
+  return (fallback||'');
+}
+
 function cargarProdDesdeDB(){
   var chunks=[DB0,DB1,DB2,DB3,DB4,DB5,DB6,DB7,DB8,DB9,DB10,DB11];
   var badge=document.getElementById('dbBadge');
@@ -698,6 +783,7 @@ function finProd(){
 // PUNTO DE ENTRADA: primero intenta el catálogo de Firebase (lo de Dux).
 // Si todavía no existe (nunca importaste con la versión nueva), usa la lista incrustada.
 function cargarProd(){
+  construirApodos();   // mapa código→apodo desde el catálogo original (siempre disponible)
   cargarCatalogoDesdeFirebase(function(ok){
     if(!ok){
       // No hay catálogo en Firebase todavía → usar respaldo incrustado
@@ -1467,7 +1553,7 @@ function agregarSeleccionados(){
     var qty=parseInt(document.getElementById('ddi-qty'+idx).value)||1;
     var found=buscarEnOrden(f[0]);
     if(found){ found.q+=qty; found.ua=ahora; duplicados.push({it:found,sum:qty}); }
-    else { items.push({c:f[0],p:f[1],v:normProv(f[2]),q:qty,fa:ahora,ua:ahora}); }
+    else { items.push({c:f[0],p:f[1],v:apodoDe(f[0],normProv(f[2])),q:qty,fa:ahora,ua:ahora}); }
     agregados++;
   }
   if(agregados===0){ toast('Tildá al menos un producto','terr'); return; }
@@ -1524,7 +1610,7 @@ function agregar(){
     inp.value=''; 
     return;
   }
-  items.push({c:f[0],p:f[1],v:normProv(f[2]),q:1,fa:ahora,ua:ahora});
+  items.push({c:f[0],p:f[1],v:apodoDe(f[0],normProv(f[2])),q:1,fa:ahora,ua:ahora});
   guardar();
   toast(f[0]+' agregado ('+f[2]+')','tok');
   inp.value=''; inp.focus(); cerrarDd(); render();
@@ -1666,26 +1752,31 @@ function normProv(v){
   return String(v||'').replace(/\s+/g,' ').trim().toUpperCase();
 }
 
-// Repara la orden actual: unifica proveedores escritos distinto y junta filas partidas.
+// Repara la orden actual: pone a cada producto el APODO de su proveedor (según el
+// catálogo original, guiándose por el código) y junta filas partidas.
 function repararProveedores(){
   if(!items || items.length===0){ toast('La orden está vacía','terr'); return; }
+  construirApodos();
   var antesProv={}; for(var i=0;i<items.length;i++){ antesProv[items[i].v]=1; }
   var nAntes=Object.keys(antesProv).length;
+  var sinApodo=0;
 
-  // 1) Normalizar el proveedor de cada ítem
-  for(var i=0;i<items.length;i++){ items[i].v=normProv(items[i].v); }
+  // 1) Asignar el apodo. Primero por código (catálogo original); si no, por razón
+  //    social usando el mapa oficial de Dux. Si ninguno lo tiene, se deja como estaba.
+  for(var i=0;i<items.length;i++){
+    var ap=apodoDe(items[i].c, null) || apodoPorRazon(items[i].v);
+    if(ap){ items[i].v=ap; } else { sinApodo++; }
+  }
 
-  // 2) Fusionar ítems que quedaron iguales (mismo código) sumando cantidades
-  var mapa={}; var fusion=[];
+  // 2) Fusionar ítems del mismo código que hayan quedado repetidos, sumando cantidades
+  var mapa={}, fusion=[];
   for(var i=0;i<items.length;i++){
     var it=items[i];
     var k=String(it.c).trim().toLowerCase();
     if(mapa[k]){
       mapa[k].q += it.q;
       if(it.ua && (!mapa[k].ua || it.ua>mapa[k].ua)) mapa[k].ua=it.ua;
-    } else {
-      mapa[k]=it; fusion.push(it);
-    }
+    } else { mapa[k]=it; fusion.push(it); }
   }
   items=fusion;
 
@@ -1693,7 +1784,9 @@ function repararProveedores(){
   var nDespues=Object.keys(despuesProv).length;
 
   guardar(); render();
-  toast('Proveedores unificados: '+nAntes+' → '+nDespues,'tok');
+  var msg='Proveedores unificados: '+nAntes+' → '+nDespues;
+  if(sinApodo>0) msg+=' ('+sinApodo+' sin apodo, sin cambiar)';
+  toast(msg,'tok');
 }
 window.repararProveedores=repararProveedores;
 
@@ -2320,7 +2413,7 @@ function scanOk(codigo){
     abrirDup(found);
     return;
   }
-  items.push({c:f[0],p:f[1],v:normProv(f[2]),q:1,fa:ahora,ua:ahora});
+  items.push({c:f[0],p:f[1],v:apodoDe(f[0],normProv(f[2])),q:1,fa:ahora,ua:ahora});
   guardar(); render();
   if(_qr){
     _qr.pause();
