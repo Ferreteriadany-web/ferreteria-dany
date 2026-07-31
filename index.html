@@ -707,14 +707,21 @@ var MAPA_PROV={
   "WORSAN SRL":"DISTRIBUIDORA BS. AS.",
   "ZC HERRAMENTAL S.A.":"ZC HERRAMENTAL"
 };
+// Normaliza razón social para comparar: MAYÚSCULAS, sin puntos, espacios simples.
+// Así "S.A.", "SA" y "S. A." se consideran iguales.
+function _nzProv(s){ return String(s||"").toUpperCase().replace(/\./g,"").replace(/\s+/g," ").trim(); }
+var _MAPA_PROV_NZ=null;
 function apodoPorRazon(v){
   if(!v) return null;
-  var k=String(v).replace(/\s+/g," ").trim().toUpperCase();
-  if(MAPA_PROV[k]) return MAPA_PROV[k];
-  // Tolerante: si el texto empieza con una razón social conocida (o viceversa),
-  // por ejemplo "VELLA HNOS ... SOCIEDAD DE HECHO" vs la del listado sin ese final.
-  for(var razon in MAPA_PROV){
-    if(k.indexOf(razon)===0 || razon.indexOf(k)===0) return MAPA_PROV[razon];
+  if(!_MAPA_PROV_NZ){
+    _MAPA_PROV_NZ={};
+    for(var kk in MAPA_PROV){ _MAPA_PROV_NZ[_nzProv(kk)]=MAPA_PROV[kk]; }
+  }
+  var k=_nzProv(v);
+  if(_MAPA_PROV_NZ[k]) return _MAPA_PROV_NZ[k];
+  // Tolerante: si uno empieza con el otro (ej. "VELLA HNOS ... SOCIEDAD DE HECHO").
+  for(var razon in _MAPA_PROV_NZ){
+    if(k.indexOf(razon)===0 || razon.indexOf(k)===0) return _MAPA_PROV_NZ[razon];
   }
   return null;
 }
@@ -1298,8 +1305,38 @@ function suscribir(uid){
   );
   unsub=FS.collection('listas').doc(uid).onSnapshot(function(snap){
     items=snap.exists?(snap.data().items||[]):[];
+    var cambio=unificarItems();   // aplicar apodos y fusionar duplicados automáticamente
     render();
+    if(cambio) guardar();          // si algo se unificó, persistirlo (una sola vez)
   });
+}
+
+// Aplica el apodo a cada ítem y fusiona filas del mismo producto. Devuelve true si cambió algo.
+// Se ejecuta solo, sin necesidad de tocar ningún botón.
+function unificarItems(){
+  if(!items || items.length===0) return false;
+  construirApodos();
+  var cambio=false;
+
+  // 1) Poner el apodo correcto a cada ítem
+  for(var i=0;i<items.length;i++){
+    var ap=apodoDe(items[i].c, null) || apodoPorRazon(items[i].v);
+    if(ap && ap!==items[i].v){ items[i].v=ap; cambio=true; }
+  }
+
+  // 2) Fusionar ítems del mismo código (por si quedaron partidos), sumando cantidades
+  var mapa={}, fusion=[];
+  for(var i=0;i<items.length;i++){
+    var it=items[i];
+    var k=String(it.c).trim().toLowerCase();
+    if(mapa[k]){
+      mapa[k].q += it.q;
+      if(it.ua && (!mapa[k].ua || it.ua>mapa[k].ua)) mapa[k].ua=it.ua;
+      cambio=true;
+    } else { mapa[k]=it; fusion.push(it); }
+  }
+  if(cambio) items=fusion;
+  return cambio;
 }
 
 function guardar(){
