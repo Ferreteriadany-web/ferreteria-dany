@@ -459,7 +459,8 @@ tbody td{padding:10px 12px;vertical-align:middle}
 
     <!-- ACCIONES (solo admin) -->
     <div class="actions" id="actionsBar" style="display:none">
-      <button class="btn bb" onclick="exportar()">&#11015; Excel proveedor activo</button>
+            <button class="btn bb" onclick="repararProveedores()" style="background:#c0392b">&#128295; Unificar proveedores</button>
+            <button class="btn bb" onclick="exportar()">&#11015; Excel proveedor activo</button>
       <button class="btn bb" onclick="exportarTodo()">&#11015; Excel todos</button>
       <button class="btn bb" id="btnConsolidar" style="display:none;background:#8e44ad" onclick="exportarConsolidado()">&#11015; Excel consolidado (todos los empleados)</button>
     </div>
@@ -1466,7 +1467,7 @@ function agregarSeleccionados(){
     var qty=parseInt(document.getElementById('ddi-qty'+idx).value)||1;
     var found=buscarEnOrden(f[0]);
     if(found){ found.q+=qty; found.ua=ahora; duplicados.push({it:found,sum:qty}); }
-    else { items.push({c:f[0],p:f[1],v:f[2],q:qty,fa:ahora,ua:ahora}); }
+    else { items.push({c:f[0],p:f[1],v:normProv(f[2]),q:qty,fa:ahora,ua:ahora}); }
     agregados++;
   }
   if(agregados===0){ toast('Tildá al menos un producto','terr'); return; }
@@ -1523,7 +1524,7 @@ function agregar(){
     inp.value=''; 
     return;
   }
-  items.push({c:f[0],p:f[1],v:f[2],q:1,fa:ahora,ua:ahora});
+  items.push({c:f[0],p:f[1],v:normProv(f[2]),q:1,fa:ahora,ua:ahora});
   guardar();
   toast(f[0]+' agregado ('+f[2]+')','tok');
   inp.value=''; inp.focus(); cerrarDd(); render();
@@ -1656,6 +1657,45 @@ function cargarPreciosFaltantes(){
   }
   siguiente();
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PROVEEDORES: normalización para que "BREMEN" y "Bremen" sean el mismo proveedor
+// ═══════════════════════════════════════════════════════════════════════════════
+function normProv(v){
+  // Canónico: sin espacios de sobra, espacios simples, MAYÚSCULAS.
+  return String(v||'').replace(/\s+/g,' ').trim().toUpperCase();
+}
+
+// Repara la orden actual: unifica proveedores escritos distinto y junta filas partidas.
+function repararProveedores(){
+  if(!items || items.length===0){ toast('La orden está vacía','terr'); return; }
+  var antesProv={}; for(var i=0;i<items.length;i++){ antesProv[items[i].v]=1; }
+  var nAntes=Object.keys(antesProv).length;
+
+  // 1) Normalizar el proveedor de cada ítem
+  for(var i=0;i<items.length;i++){ items[i].v=normProv(items[i].v); }
+
+  // 2) Fusionar ítems que quedaron iguales (mismo código) sumando cantidades
+  var mapa={}; var fusion=[];
+  for(var i=0;i<items.length;i++){
+    var it=items[i];
+    var k=String(it.c).trim().toLowerCase();
+    if(mapa[k]){
+      mapa[k].q += it.q;
+      if(it.ua && (!mapa[k].ua || it.ua>mapa[k].ua)) mapa[k].ua=it.ua;
+    } else {
+      mapa[k]=it; fusion.push(it);
+    }
+  }
+  items=fusion;
+
+  var despuesProv={}; for(var i=0;i<items.length;i++){ despuesProv[items[i].v]=1; }
+  var nDespues=Object.keys(despuesProv).length;
+
+  guardar(); render();
+  toast('Proveedores unificados: '+nAntes+' → '+nDespues,'tok');
+}
+window.repararProveedores=repararProveedores;
 
 function renderInterno(){
   var provs=[];
@@ -2280,7 +2320,7 @@ function scanOk(codigo){
     abrirDup(found);
     return;
   }
-  items.push({c:f[0],p:f[1],v:f[2],q:1,fa:ahora,ua:ahora});
+  items.push({c:f[0],p:f[1],v:normProv(f[2]),q:1,fa:ahora,ua:ahora});
   guardar(); render();
   if(_qr){
     _qr.pause();
