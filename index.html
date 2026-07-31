@@ -1372,8 +1372,8 @@ function buscarLista(val){
   var exact=[], starts=[], codeHas=[], descHas=[];
   for(var i=0;i<PROD.length;i++){
     var r=PROD[i];
-    // Aplicar filtro de proveedor si está activo
-    if(_filtroProv!=='TODOS' && r[2]!==_filtroProv) continue;
+    // Aplicar filtro de proveedor si está activo (comparar por APODO, igual que el selector)
+    if(_filtroProv!=='TODOS' && apodoDe(r[0], r[2])!==_filtroProv) continue;
     var c=r[0].toLowerCase(), p=r[1].toLowerCase(), v=r[2].toLowerCase();
     var b=r[3]?r[3].toLowerCase():'';
     if(palabras.length===1){
@@ -1412,10 +1412,17 @@ var _dbt, _ddSel=-1, _filtroProv='TODOS';
 // Poblar el select con los proveedores únicos de la DB
 function poblarProveedores(){
   var provs={};
-  for(var i=0;i<PROD.length;i++) provs[PROD[i][2]]=true;
+  for(var i=0;i<PROD.length;i++){
+    // Mostrar el APODO del proveedor, no el nombre crudo del catálogo (que puede ser
+    // la razón social de Dux). Así el selector coincide con las pestañas de la orden.
+    var ap=apodoDe(PROD[i][0], PROD[i][2]);
+    if(ap) provs[ap]=true;
+  }
   var sorted=Object.keys(provs).sort();
   var sel=document.getElementById('filtroProvSelect');
   if(!sel) return;
+  // Limpiar opciones anteriores (menos "Todos"), por si se re-puebla
+  for(var i=sel.options.length-1;i>=1;i--) sel.remove(i);
   for(var i=0;i<sorted.length;i++){
     var opt=document.createElement('option');
     opt.value=sorted[i]; opt.textContent=sorted[i];
